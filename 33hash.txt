@@ -1,0 +1,331 @@
+/*
+The following is a hash function based on (3,3)-isogenies between superspecial p.p.a.s.
+One can change the security level by changing the variable p at the top of the code.
+The starting values of r,s,t in the function get_start_rst are hardcoded to represent
+superspecial p.p.a.s. without special automorphisms.
+Remark that the code is a proof of concept: certain exceptional cases discussed in the
+accompanying paper are not implemented. However, these only occur with chance O(1/p),
+which is negligble for cryptographic parameters.
+*/
+
+clear;
+
+p86  := 2^86  + 163;
+p128 := 2^128 + 1783;
+p171 := 2^171 + 1839;
+p256 := 2^256 + 931;
+
+p := p86;
+
+K := GF(p);
+Kx<x> := PolynomialRing(K);
+K<twist> := ext<K | x^2 + 3>; // The twists we work over are all defined up to square root of -3.
+z3 := (twist + 1)/-2; // Cubic root of unity
+Kx<x> := PolynomialRing(K);
+
+
+function get_start_rst(p)
+  case p:
+   when p86:
+    return
+	71945437454451957483017416*twist + 59638549721281706539036986,
+	50193634331017637463151671*twist + 35611130451315345975865656,
+	12225199083061217775930418*twist + 21797061337841432812691693;
+   when p128:
+    return
+	234679466529898282763966687469954206453*twist +
+	    197205704037424508891532161369412918889,
+	6506075079935192283470390729908444275*twist +
+	    238626262491099128472757266266643447580,
+	122042302386441623533973844083729285112*twist +
+	    299928499859829690764517789833493281821;
+   when p171:
+    return
+	2776853771374553006276324204933718277065098842093168*twist +
+	    520981825498096371953359047657928643993866190737511,
+	1985336696191293709353219294103009418487731756442378*twist +
+	    121629541832919844147820885486146150221246052901352,
+	2089617060400194820646859848539444431700090901412096*twist +
+	    2298959468865366317837360639859149509808073102540589;
+   when p256:
+    return
+	31783480117642466986398152901295326645623324237627809592525913156811765308614*twist
+	    + 52056772514332455368836840276352100092710000495267222276799261242404800456196,
+	102741108888789736916548693063230898663856636784761552169736201061436479965331*twist
+	    + 1811359562655918746293313082481945074244333793196654175299667463511291349093,
+	107953148178432856699325814511166823898186115047176537331828261980919003855855*twist
+	    + 40096014858782103369484238428839313734690224923064293819032078786027930894697;
+  end case;
+end function;
+
+
+
+function get_pairings(R, S, T)
+  
+  /*
+   We go back to the previous (isogenous) curve for which the parameters R, S, T determine
+   the (3,3)-dual kernel. The parameters r, s, t then determine the previous curve, on which
+   we need to compute the Tate pairings.
+
+   Remark that these are not the actual pairings, but factors of the pairings that make
+   the computations easier. Adjoining all three of a, b, c to a field is the same as adjoining
+   the actual Tate-pairings though.
+  */
+
+  d1 := T;
+  d2 := S;
+  d4 := R^3 - 3*R*T + T^2 + T;
+  d5 := R^3*S - 3*R*S*T + S*T^2 + S*T + T;
+  d8 := R^2 - T;
+  d9 := R - 1;
+  d10 := R*S - S*T - 1;
+  delta := R^6*S^2 - 6*R^4*S^2*T - 3*R^4*S + 2*R^3*S^2*T^2 + 2*R^3*S^2*T
+		+ 3*R^3*S*T + R^3*S + R^3 + 9*R^2*S^2*T^2 + 6*R^2*S*T
+	- 6*R*S^2*T^3 - 6*R*S^2*T^2 - 9*R*S*T^2 - 3*R*S*T - 3*R*T + S^2*T^4
+		+ 2*S^2*T^3 + S^2*T^2 + 2*S*T^3 + 3*S*T^2 + T^2 + T;
+
+
+  r := -d2*d9*d8*(d5-R)/(d10^2*d4);
+  s := d10^3*d4^2/(d1*d2*d9^3*delta);
+  t := d2^2*d9^3*d8^3/(d10^3*d4^2);
+
+  d1 := t;
+  d2 := s;
+  d4 := r^3 - 3*r*t + t^2 + t;
+  d6 := r^3*s^2 - 3*r*s^2*t - 3*r*s + s^2*t^2 + s^2*t + 2*s*t + s + 1;
+  d7 := r^3*s^2*t + r^3*s - 3*r*s^2*t^2 - 3*r*s*t + s^2*t^3 + s^2*t^2 + 2*s*t^2 + t;
+
+  a := Root(d7, 3);
+  b := Root(d2*d4^2, 3);
+  c := Root(d1*d6^2, 3);
+
+  return a, b, c;
+
+end function;
+
+
+
+function action_on_cubic_roots(a, b, c, hashtrits)
+
+  trits := Intseq(hashtrits,3);
+  while #trits ne 3 do trits cat:= [0]; end while;
+  return a*z3^trits[1], b*z3^trits[2], c*z3^trits[3];
+
+end function;
+
+
+
+function get_b4s(R, S, T, a, b, c)
+  
+  D1 := T;
+  D2 := S;
+  D3 := S*T + 1;
+  D4 := R^3 - 3*R*T + T^2 + T;
+  D5 := R^3*S - 3*R*S*T + S*T^2 + S*T + T;
+  D8 := R^2 - T;
+  D9 := R - 1;
+  D10 := R*S - S*T - 1;
+  D11 := S*T - S + 1;
+  DELTA := R^6*S^2 - 6*R^4*S^2*T - 3*R^4*S + 2*R^3*S^2*T^2 + 2*R^3*S^2*T
+		+ 3*R^3*S*T + R^3*S + R^3 + 9*R^2*S^2*T^2 + 6*R^2*S*T
+	- 6*R*S^2*T^3 - 6*R*S^2*T^2 - 9*R*S*T^2 - 3*R*S*T - 3*R*T + S^2*T^4
+		+ 2*S^2*T^3 + S^2*T^2 + 2*S*T^3 + 3*S*T^2 + T^2 + T;
+
+
+
+
+  cofab1 := D1^2     *D4^4     *D10^8		/(D2^3*D8^6*D9^2*DELTA^2);
+  cofab2 := D1^2     *D4^4*D8  *D10^7      *D11	/(D2^2*D8^6*D9^2*DELTA^2);
+  cofab3 := D1       *D4^4*D8^2*D10^6		/(D2  *D8^6*D9^2*DELTA^2);
+  cofab4 := D1^2     *D4^2*     D10^5      *D11	/(D2^2*D8^4*D9  *DELTA);
+  cofab5 := D1       *D4^2*D8*  D10^4		/(D2  *D8^4*D9  *DELTA);
+  cofab6 := D1  *D3  *D4^2*D8^2*D10^3		/(     D8^4*D9  *DELTA);
+  cofab7 := D1^2                     *D10^2	/      D8^2;
+  cofab8 := D1                       *D10	/      D8;
+  cofab9 :=                                D11;
+
+  cofab1 *:= -6*S*T-2;
+  cofab2 *:= -2;
+  cofab3 *:= 6*S*T+4;
+  cofab4 *:= 2;
+  cofab5 *:= -6*S*T-2;
+  cofab6 *:= -6;
+  cofab7 *:= 6;
+  cofab8 *:= 6*S*T+4;
+  cofab9 *:= 2*S*T+1;
+
+  b4ab := twist* ((cofab9 + cofab8*a + cofab7*a^2) + (cofab6 + cofab5*a + cofab4*a^2)*b + (cofab3 + cofab2*a + cofab1*a^2)*b^2);
+
+
+  cofbc1 := 1			/(D2  *D4^3);
+  cofbc2 := D1^2   *D9  *D10	/(D2  *D4^3     *D8);
+  cofbc3 := D1^3   *D9^2*D10^2	/(D2  *D4^3*D5  *D8^2);
+  cofbc4 := D1          *D10^3	/(D2^2*D4       *D8^2*D9  *DELTA);
+  cofbc5 := D1^2        *D10^4	/(D2^2*D4       *D8^3     *DELTA);
+  cofbc6 := D1^3   *D9  *D10^5	/(D2^2*D4  *D5  *D8^4     *DELTA);
+  cofbc7 := D1  *D4     *D10^6	/(D2^3          *D8^4*D9^2*DELTA^2);
+  cofbc8 := D1^2*D4     *D10^7	/(D2^3          *D8^5*D9  *DELTA^2);
+  cofbc9 := D1^4*D4     *D10^8	/(D2^3     *D5  *D8^6     *DELTA^2);
+
+
+  cofbc1 *:= R^9*S^2*T + R^9*S^2 - R^9*S - 6*R^8*S^2*T - 3*R^7*S^2*T^2 - 3*R^7*S^2*T - 5*R^7*S*T + R^6*S^2*T^3 + 40*R^6*S^2*T^2 + R^6*S^2*T + 13*R^6*S*T^2 + 13*R^6*S*T - 2*R^6*T - 21*R^5*S^2*T^3 -
+        21*R^5*S^2*T^2 + 3*R^5*S*T^2 + 6*R^4*S^2*T^4 - 54*R^4*S^2*T^3 + 6*R^4*S^2*T^2 - 52*R^4*S*T^3 - 52*R^4*S*T^2 - 6*R^4*T^2 - R^3*S^2*T^5 + 64*R^3*S^2*T^4 + 64*R^3*S^2*T^3 - R^3*S^2*T^2
+        + 11*R^3*S*T^4 + 103*R^3*S*T^3 + 11*R^3*S*T^2 + 14*R^3*T^3 + 14*R^3*T^2 - 33*R^2*S^2*T^5 - 48*R^2*S^2*T^4 - 33*R^2*S^2*T^3 - 15*R^2*S*T^4 - 15*R^2*S*T^3 - 18*R^2*T^3 + 9*R*S^2*T^6 +
+        15*R*S^2*T^5 + 15*R*S^2*T^4 + 9*R*S^2*T^3 + 7*R*S*T^5 - 40*R*S*T^4 + 7*R*S*T^3 - 6*R*T^4 - 6*R*T^3 - S^2*T^7 - 2*S^2*T^6 - 2*S^2*T^5 - 2*S^2*T^4 - S^2*T^3 - 3*S*T^6 + 9*S*T^5 +
+        9*S*T^4 - 3*S*T^3 - 2*T^5 + 14*T^4 - 2*T^3;
+  cofbc2 *:= -2*R^7*S + 8*R^6*S - 6*R^5*S + 6*R^5 + 2*R^4*S*T^2 - 22*R^4*S*T - 12*R^4*T + 22*R^3*S*T^2 + 28*R^3*S*T + 6*R^3*T - 18*R^2*S*T^3 - 24*R^2*S*T^2 - 6*R^2*S*T + 6*R^2*T^2 - 12*R^2*T +
+        4*R*S*T^4 + 20*R*S*T^3 - 2*R*S*T^2 + 6*R*T^3 + 6*R*T^2 - 4*S*T^4 - 2*S*T^3 + 2*S*T^2 - 12*T^3 + 6*T^2;
+  cofbc3 *:= 2*R^8*S - 6*R^7*S + 4*R^6*S*T - 8*R^5*S*T^2 + 16*R^5*S*T + 6*R^5*T - 30*R^4*S*T^2 - 12*R^4*T + 44*R^3*S*T^3 + 14*R^3*S*T^2 + 6*R^3*T^2 - 10*R^2*S*T^4 - 32*R^2*S*T^3 - 22*R^2*S*T^2 -
+        12*R^2*T^3 + 6*R^2*T^2 - 6*R*S*T^4 + 36*R*S*T^3 + 6*R*S*T^2 + 6*R*T^3 + 6*R*T^2 + 4*S*T^5 - 4*S*T^4 - 8*S*T^3 + 6*T^4 - 12*T^3;
+  cofbc4 *:= 2*R^9*S^2 - 2*R^8*S^2*T - 4*R^8*S^2 + 4*R^8*S - 8*R^7*S^2*T + 2*R^7*S^2 - 10*R^7*S + 16*R^6*S^2*T^2 + 26*R^6*S^2*T - 4*R^5*S^2*T^3 - 18*R^5*S^2*T^2 - 20*R^5*S^2*T - 10*R^5*S*T^2 +
+        32*R^5*S*T + 6*R^5*T - 22*R^4*S^2*T^3 - 24*R^4*S^2*T^2 + 4*R^4*S^2*T - 38*R^4*S*T^2 - 2*R^4*S*T - 12*R^4*T + 14*R^3*S^2*T^4 + 72*R^3*S^2*T^3 + 40*R^3*S^2*T^2 + 60*R^3*S*T^3 +
+        6*R^3*S*T^2 + 6*R^3*T^2 - 2*R^2*S^2*T^5 - 32*R^2*S^2*T^4 - 64*R^2*S^2*T^3 - 16*R^2*S^2*T^2 - 14*R^2*S*T^4 - 40*R^2*S*T^3 - 26*R^2*S*T^2 - 12*R^2*T^3 + 6*R^2*T^2 + 4*R*S^2*T^5 +
+        22*R*S^2*T^4 + 20*R*S^2*T^3 + 2*R*S^2*T^2 - 10*R*S*T^4 + 52*R*S*T^3 + 8*R*S*T^2 + 6*R*T^3 + 6*R*T^2 - 2*S^2*T^5 - 4*S^2*T^4 - 2*S^2*T^3 + 6*S*T^5 - 6*S*T^4 - 12*S*T^3 + 6*T^4 -
+        12*T^3;
+  cofbc5 *:= -2*R^7*S + 4*R^6*S*T + 4*R^6*S - 2*R^6 - 6*R^5*S*T - 10*R^4*S*T^2 - 10*R^4*S*T - 6*R^4*T + 2*R^3*S*T^3 + 46*R^3*S*T^2 + 2*R^3*S*T + 14*R^3*T^2 + 14*R^3*T - 24*R^2*S*T^3 - 24*R^2*S*T^2 -
+        18*R^2*T^2 + 10*R*S*T^4 + 2*R*S*T^3 + 10*R*S*T^2 - 6*R*T^3 - 6*R*T^2 - 2*S*T^5 - 2*S*T^2 - 2*T^4 + 14*T^3 - 2*T^2;
+  cofbc6 *:= 2*R^8*S - 6*R^7*S*T + 4*R^6*S*T + 16*R^5*S*T^2 - 8*R^5*S*T + 6*R^5*T - 30*R^4*S*T^2 - 12*R^4*T^2 + 14*R^3*S*T^3 + 44*R^3*S*T^2 + 6*R^3*T^2 - 22*R^2*S*T^4 - 32*R^2*S*T^3 - 10*R^2*S*T^2 +
+        6*R^2*T^3 - 12*R^2*T^2 + 6*R*S*T^5 + 36*R*S*T^4 - 6*R*S*T^3 + 6*R*T^4 + 6*R*T^3 - 8*S*T^5 - 4*S*T^4 + 4*S*T^3 - 12*T^4 + 6*T^3;
+  cofbc7 *:= 2*R^9*S^2 - 4*R^8*S^2*T - 2*R^8*S^2 + 4*R^8*S + 2*R^7*S^2*T^2 - 8*R^7*S^2*T - 10*R^7*S*T + 26*R^6*S^2*T^2 + 16*R^6*S^2*T - 20*R^5*S^2*T^3 - 18*R^5*S^2*T^2 - 4*R^5*S^2*T + 32*R^5*S*T^2 -
+        10*R^5*S*T + 6*R^5*T + 4*R^4*S^2*T^4 - 24*R^4*S^2*T^3 - 22*R^4*S^2*T^2 - 2*R^4*S*T^3 - 38*R^4*S*T^2 - 12*R^4*T^2 + 40*R^3*S^2*T^4 + 72*R^3*S^2*T^3 + 14*R^3*S^2*T^2 + 6*R^3*S*T^3 +
+        60*R^3*S*T^2 + 6*R^3*T^2 - 16*R^2*S^2*T^5 - 64*R^2*S^2*T^4 - 32*R^2*S^2*T^3 - 2*R^2*S^2*T^2 - 26*R^2*S*T^4 - 40*R^2*S*T^3 - 14*R^2*S*T^2 + 6*R^2*T^3 - 12*R^2*T^2 + 2*R*S^2*T^6 +
+        20*R*S^2*T^5 + 22*R*S^2*T^4 + 4*R*S^2*T^3 + 8*R*S*T^5 + 52*R*S*T^4 - 10*R*S*T^3 + 6*R*T^4 + 6*R*T^3 - 2*S^2*T^6 - 4*S^2*T^5 - 2*S^2*T^4 - 12*S*T^5 - 6*S*T^4 + 6*S*T^3 - 12*T^4 +
+        6*T^3;
+  cofbc8 *:= -2*R^7*S + 8*R^6*S*T - 6*R^5*S*T^2 + 6*R^5*T - 22*R^4*S*T^2 + 2*R^4*S*T - 12*R^4*T + 28*R^3*S*T^3 + 22*R^3*S*T^2 + 6*R^3*T^2 - 6*R^2*S*T^4 - 24*R^2*S*T^3 - 18*R^2*S*T^2 - 12*R^2*T^3 +
+        6*R^2*T^2 - 2*R*S*T^4 + 20*R*S*T^3 + 4*R*S*T^2 + 6*R*T^3 + 6*R*T^2 + 2*S*T^5 - 2*S*T^4 - 4*S*T^3 + 6*T^4 - 12*T^3;
+  cofbc9 *:= -8*R^7*S + 10*R^6*S*T + 10*R^6*S - 2*R^6 + 12*R^5*S*T - 40*R^4*S*T^2 - 40*R^4*S*T - 6*R^4*T + 8*R^3*S*T^3 + 64*R^3*S*T^2 + 8*R^3*S*T + 14*R^3*T^2 + 14*R^3*T - 6*R^2*S*T^3 - 6*R^2*S*T^2
+        - 18*R^2*T^2 + 4*R*S*T^4 - 28*R*S*T^3 + 4*R*S*T^2 - 6*R*T^3 - 6*R*T^2 - 2*S*T^5 + 6*S*T^4 + 6*S*T^3 - 2*S*T^2 - 2*T^4 + 14*T^3 - 2*T^2;
+
+  b4bc := twist* ((cofbc1 + cofbc2*c + cofbc3*c^2) + (cofbc4 + cofbc5*c + cofbc6*c^2)*b + (cofbc7 + cofbc8*c + cofbc9*c^2)*b^2);
+
+  return b4ab, b4bc;
+
+end function;
+
+
+
+function get_bi(R, S, T, b4ab, b4bc)
+  
+  Qb<b5,b6> := PolynomialRing(K,2);
+  Qx<x> := PolynomialRing(Qb);
+  H1 := x^2 + R*x + T;
+  lambda1 := 4*S;
+  G1 := (S - S*T - 1)*x^3 + 3*S*(R - T)*x^2 + 3*S*R*(R - T)*x - S*T^2 + S*R^3 + T;
+  F := G1^2 + lambda1*H1^3;
+
+  invab := 1/(2*b4ab);
+  b7 := Eltseq(F)[7] - b4ab^2;
+  b3 := (Eltseq(F)[6] - 3*b6*b7)*invab;
+  b2 := (Eltseq(F)[5] - b3^2 - 3*b5*b7 - 3*b6^2*b7)*invab;
+  b1 := (Eltseq(F)[4] - 2*b2*b3 - 6*b5*b6*b7 - b6^3*b7)*invab;
+  Iab :=[    -b1^2 - b5^3*b7 + Eltseq(F)[1],
+    -2*b1*b2 - 3*b5^2*b6*b7 + Eltseq(F)[2],
+    -2*b1*b3 - b2^2 - 3*b5^2*b7 - 3*b5*b6^2*b7 + Eltseq(F)[3]];
+  pol := Iab[2]*Coefficients(Iab[3],b5)[3] - Iab[3]*Coefficients(Iab[2],b5)[3];
+  b5den := Coefficients(pol,b5)[2];
+  b5num := -Coefficients(pol,b5)[1];
+  pol1 := &+[Coefficients(Iab[1],b5)[i+1]*b5num^i*b5den^(3-i) : i in [0..3]];
+  pol2 := &+[Coefficients(Iab[2],b5)[i+1]*b5num^i*b5den^(2-i) : i in [0..2]];
+  b6ab := -Coefficients(GCD(pol1,pol2))[2];
+  b5ab := Evaluate(b5num,b6,b6ab)/Evaluate(b5den,b6,b6ab);
+  bi_ab := [K ! Evaluate(bi,[b5ab,b6ab]) : bi in [b1,b2,b3]] cat [K ! b4ab, K ! b5ab, K ! b6ab, K ! b7];
+
+  invbc := 1/(2*b4bc);
+  b7 := Eltseq(F)[7] - b4bc^2;
+  b3 := (Eltseq(F)[6] - 3*b6*b7)*invbc;
+  b2 := (Eltseq(F)[5] - b3^2 - 3*b5*b7 - 3*b6^2*b7)*invbc;
+  b1 := (Eltseq(F)[4] - 2*b2*b3 - 6*b5*b6*b7 - b6^3*b7)*invbc;
+  Ibc :=[    -b1^2 - b5^3*b7 + Eltseq(F)[1],
+    -2*b1*b2 - 3*b5^2*b6*b7 + Eltseq(F)[2],
+    -2*b1*b3 - b2^2 - 3*b5^2*b7 - 3*b5*b6^2*b7 + Eltseq(F)[3]];
+  pol := Ibc[2]*Coefficients(Ibc[3],b5)[3] - Ibc[3]*Coefficients(Ibc[2],b5)[3];
+  b5den := Coefficients(pol,b5)[2];
+  b5num := -Coefficients(pol,b5)[1];
+  pol1 := &+[Coefficients(Ibc[1],b5)[i+1]*b5num^i*b5den^(3-i) : i in [0..3]];
+  pol2 := &+[Coefficients(Ibc[2],b5)[i+1]*b5num^i*b5den^(2-i) : i in [0..2]];
+  b6bc := -Coefficients(GCD(pol1,pol2))[2];
+  b5bc := Evaluate(b5num,b6,b6bc)/Evaluate(b5den,b6,b6bc);
+  bi_bc := [K ! Evaluate(bi,[b5bc,b6bc]) : bi in [b1,b2,b3]] cat [K ! b4bc, K ! b5bc, K ! b6bc, K ! b7];
+
+  return bi_ab, bi_bc;
+
+end function;
+
+
+
+function get_new_rst(R, S, T, bi_ab, bi_bc)
+
+  Qnew<newr,newt,news,aa,cc,bb,dd,newtinv> := PolynomialRing(K,8,"grevlex");
+  Qx<x> := PolynomialRing(Qnew);
+  
+  I0 := [newt*newtinv - 1]; // Assertion such that t =/= 0
+  
+  G1 := ((news - news*newt - 1)*x^3 + 3*news*(newr - newt)*x^2 + 3*news*newr*(newr - newt)*x - news*newt^2 + news*newr^3 + newt);
+  Gab := (bi_ab[4]*x^3 + bi_ab[3]*x^2 + bi_ab[2]*x + bi_ab[1]); Gabeval := Qx ! Numerator(Evaluate(Gab,(aa*x + bb)/(cc*x + dd))*(cc*x + dd)^3);
+  I1 := [Eltseq(G1)[i] - Eltseq(Gabeval)[i] : i in [1..4]];
+
+  G2 := ((news - news*newt + 1)*x^3 + 3*news*(newr - newt)*x^2 + 3*news*newr*(newr - newt)*x - news*newt^2 + news*newr^3 - newt);
+  Gbc := (bi_bc[4]*x^3 + bi_bc[3]*x^2 + bi_bc[2]*x + bi_bc[1]); Gabeval := Qx ! Numerator(Evaluate(Gbc,(aa*x + bb)/(cc*x + dd))*(cc*x + dd)^3);
+  I2 := [Eltseq(G2)[i] - Eltseq(Gabeval)[i] : i in [1..4]];
+
+  H2 := x^2 + x + newr;
+  Hbc := (x^2 + bi_bc[6]*x + bi_bc[5]); Hbceval := Qx ! Numerator(Evaluate(Hbc,(aa*x + bb)/(cc*x + dd))*(cc*x + dd)^2);
+  I3 := [LeadingCoefficient(Hbceval)*Eltseq(H2)[i] - Eltseq(Hbceval)[i] : i in [1..2]];
+
+  GB := GroebnerBasis(I0 cat I1 cat I2 cat I3);
+
+  newr := -Coefficients(GB[2])[2];
+  news := -Coefficients(GB[4])[2];
+  newt := -Coefficients(GB[3])[2];
+
+  return newr, news, newt;
+
+end function;
+
+
+
+function get_isogenous_RST(r, s, t)
+  
+  d1 := t;
+  d2 := s;
+  d4 := r^3 - 3*r*t + t^2 + t;
+  d5 := r^3*s - 3*r*s*t + s*t^2 + s*t + t;
+  d8 := r^2 - t;
+  d9 := r - 1;
+  d10 := r*s - s*t - 1;
+  delta := r^6*s^2 - 6*r^4*s^2*t - 3*r^4*s + 2*r^3*s^2*t^2 + 2*r^3*s^2*t
+		+ 3*r^3*s*t + r^3*s + r^3 + 9*r^2*s^2*t^2 + 6*r^2*s*t
+	- 6*r*s^2*t^3 - 6*r*s^2*t^2 - 9*r*s*t^2 - 3*r*s*t - 3*r*t + s^2*t^4
+		+ 2*s^2*t^3 + s^2*t^2 + 2*s*t^3 + 3*s*t^2 + t^2 + t;
+
+
+  R := -d2*d9*d8*(d5-r)/(d10^2*d4);
+  S := d10^3*d4^2/(d1*d2*d9^3*delta);
+  T := d2^2*d9^3*d8^3/(d10^3*d4^2);
+
+  return R, S, T;
+
+end function;
+
+
+
+function hash(input);
+
+  r, s, t := get_start_rst(p);
+
+  for hashtrits in Intseq(input, 27) do
+    a, b, c := get_pairings(r, s, t);
+    a, b, c := action_on_cubic_roots(a, b, c, hashtrits);
+    b4ab, b4bc := get_b4s(r, s, t, a, b, c);
+    bi_ab, bi_bc := get_bi(r, s, t, b4ab, b4bc);
+    r, s, t := get_new_rst(r, s, t, bi_ab, bi_bc);
+    r, s, t := get_isogenous_RST(r, s, t);
+  end for;
+
+  return r, s, t;
+
+end function;
+
+
+
+hash(Random(2^100));

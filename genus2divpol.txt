@@ -1,0 +1,246 @@
+/*
+ This file contains functions that can generate a generalized version
+ of elliptic curve division polynomials for genus-2 curves.
+
+ The notations are taken from Cantor's "On the analogue of the division
+ polynomials for hyperelliptic curves", and - to a lesser extent - from
+ Gaudry & Schost's "Modular equations for hyperelliptic curves".
+
+ Note that the computations become memory-intensive quite fast:
+ for a random curve over an 18-bit prime field, computing the generalised
+ 7-division polynomial took twelve hours and dozens of gigabytes of memory.
+ Keep in mind that in this case, the resulting polynomial was of degree 1200
+ and the Gröbner basis computations deal with even higher-degree polynomials
+ as their input.
+ Computations over the rationals take even more time (as can be expected),
+ and should not be expected to finish for anything higher than 3-torsion.
+
+ There are four parameter inputs (initialized at the top):
+ - The field K (which ideally is a prime field).
+ - The polynomial f(x) such that C is given by y^2 = f(x); note that the
+   degree of f(x) should always be five!
+ - The torsion we are looking for, named ell (which needs to be at least g+1
+   = 3 due to Cantor's construction, and at most 7 due to memory constraints).
+ - The boolean prod; changing this to true will yield the minimal polynomial
+   of x1*x2 instead of x1+x2, where D = (x^2 - (x1+x2)*x + x1*x2, ...) is the
+   Mumford representation of an ell-torsion element.
+*/
+
+clear;
+p := NextPrime(2^18); K := GF(p); Rx<x> := PolynomialRing(K);
+f := x^5 - 3*x^2 + 4;
+ell := 5;
+prod := false;
+
+g := Genus(HyperellipticCurve(f));
+assert g eq 2;
+
+Q<x1> := FunctionField(K);
+R<y> := PolynomialRing(Q);
+Q<y1> := ext<Q | y^2 - Evaluate(f,x1)>;
+Qz<z> := PolynomialRing(Q);
+R<x> := PowerSeriesRing(Q);
+
+function get_power_series(f)
+  // Pick a generic point (x1,y1) on the curve and change of variables x -> x1 - z with z unknown
+  E := Qz ! Eltseq(Evaluate(f, x1-z));
+  Epower := R ! E;
+  _, S := IsSquare(Epower);
+  return -S;
+end function;
+
+S := get_power_series(f);
+
+function get_mr(r)
+  mr := Floor((r + g)/2);
+  return mr;
+end function;
+
+function get_nr(r)
+  nr := Floor((r - g - 1)/2);
+  return nr;
+end function;
+
+function get_hmn(m, n)
+  H := ZeroMatrix(Q, n, n);
+  si := Eltseq(S);
+  for i := 1 to n do
+    for j := 1 to n do
+      ind := m - n + i + j - 1;
+      if ind ge 0 then H[i,j] := si[ind + 1]; end if; 
+    end for;
+  end for;
+  return Determinant(H);
+end function;
+
+function get_fr(r)
+  if r ge -1 and r le g-1 then return 0;
+  else
+    return get_hmn(get_mr(r+1), get_nr(r+1));
+  end if;
+end function;
+
+
+function get_umn(m, n)
+  if n eq -1 then return -z^m; end if;
+  U := ZeroMatrix(Qz, n+1, n+1);
+  si := Eltseq(S);
+  for i := 1 to n do
+    for j := 1 to n + 1 do
+      ind := m - n + i + j - 1;
+      if ind ge 0 then U[i,j] := si[ind + 1]; end if; 
+    end for;
+  end for;
+  for j := 1 to n+1 do
+    U[n+1,j] := z^(n+1-j) * (Qz ! si[1..m-n+j]);
+  end for;
+  return Determinant(U);
+end function;
+
+function get_Ar(r);
+  if 0 le r and r le g then return -z^r;
+  else
+    return get_umn(get_mr(r), get_nr(r));
+  end if;
+end function;
+
+function get_vmn(m, n)
+  V := ZeroMatrix(Qz, n+1, n+1);
+  si := Eltseq(S);
+  for i := 1 to n do
+    for j := 1 to n + 1 do
+      ind := m - n + i + j - 1;
+      if ind ge 0 then V[i,j] := si[ind + 1]; end if; 
+    end for;
+  end for;
+  for j := 1 to n+1 do
+    V[n+1,j] := z^(n+1-j);
+  end for;
+  return Determinant(V);
+end function;
+
+function get_Br(r);
+  if 0 le r and r le g then return 0;
+  else
+    return get_vmn(get_mr(r), get_nr(r));
+  end if;
+end function;
+
+function get_wmn(m, n)
+  return (R ! get_umn(m, n)) - (R ! get_vmn(m, n))*S;
+end function;
+
+function get_Cr(r)
+  if 0 le r and r le g then return 1;
+  else
+    return -get_wmn(get_mr(r), get_nr(r))/x^r;
+  end if;
+end function;
+
+function get_Dr(r)
+  if r eq g then return -z^g; end if;
+  Ar := get_Ar(r);
+  Cr := get_Cr(r);
+  Dr := 2 * Qz ! Eltseq(R ! Ar*Cr)[1..g+1];
+  return Dr;
+end function;
+
+function get_nur(r)
+  return Binomial(r, 2) - Binomial(g, 2);
+end function;
+
+function get_deltar(r)
+  nur := get_nur(r);
+  Dr := get_Dr(r);
+  deltar := (2*y1)^(2*nur) * Evaluate(Dr, 4*y1^2*z);
+  return deltar;
+end function;
+
+function get_Ebarr(r)
+  if r eq g then return Qz ! Eltseq((-1)^(g+1) * S)[1..r]; end if; // Not sure about (-1)^(g+1) extra here.
+  Drplus := get_Dr(r+1);
+  Dr := get_Dr(r);
+  Drmin := get_Dr(r-1);
+  frplus := get_fr(r+1);
+  fr := get_fr(r);
+  frmin := get_fr(r-1);
+  Ebarr := Qz ! ( (z * frmin * frplus)/(2 * fr^2) * ( Drplus/frplus^2 - Drmin/frmin^2 ) );
+  Ebarr := Ebarr mod Dr;
+  return Ebarr;
+end function;
+
+function get_epsilonr(r)
+  Ebarr := get_Ebarr(r);
+  epsilonr := Evaluate(Ebarr, 4*y1^2*z);
+  return epsilonr;
+end function;
+
+function get_mumford(r)
+  return [ Evaluate(get_deltar(r), (x1-z)/(4*y1^2)), Evaluate(get_epsilonr(r), (x1-z)/(4*y1^2))];
+end function;
+
+function get_divpol(f, ell, prod)
+  mumf := get_mumford(ell);
+  mumf := [Qz ! Reverse(Eltseq(mumf[1])), Qz ! Reverse(Eltseq(mumf[2]))]; // Geen idee waarom ik de reciprocals heb...
+
+  mumf1 := mumf[1]; mumf1 /:= LeadingCoefficient(mumf1);
+  mumf2 := mumf[2]; mumf2 /:= y1;
+
+  d2 := Numerator(Eltseq(mumf1)[1]);
+  d1 := Numerator(Eltseq(mumf1)[2]);
+  d0 := Denominator(Eltseq(mumf1)[1]);
+  d2 := Qz ! Eltseq(Numerator(Eltseq(d2)[1]));
+  d1 := Qz ! Eltseq(Numerator(Eltseq(d1)[1]));
+  d0 := Qz ! d0;
+  e2 := Numerator(Eltseq(mumf2)[1]);
+  e1 := Numerator(Eltseq(mumf2)[2]);
+  e0 := Denominator(Eltseq(mumf2)[1]);
+  e2 := Qz ! Eltseq(Numerator(Eltseq(e2)[1]));
+  e1 := Qz ! Eltseq(Numerator(Eltseq(e1)[1]));
+  e0 := Qz ! e0;
+
+  Qxi<x1,x2,x0> := PolynomialRing(Q,3);
+
+  E1 := Evaluate(d1,x1)*Evaluate(d2,x2) - Evaluate(d2,x1)*Evaluate(d1,x2);
+  E2 := Evaluate(d0,x1)*Evaluate(d2,x2) - Evaluate(d2,x1)*Evaluate(d0,x2);
+  E1 div:= x1-x2;
+  E2 div:= x1-x2;
+
+  n := 4*ell^4 - 10*ell^2 + 6;
+  delta := 2*ell^2 - 3;	// This is wrong in the paper. It says 2*ell^2-2 but that's one factor too many.
+  samples := [];
+  values := [];
+  for ksi in [1..n+5] do
+   res := Resultant(Evaluate(E1, x1, ksi), Evaluate(E2, x1, ksi), x2);
+   den := Evaluate(d2, ksi)^delta;
+   Append(~samples, K ! ksi);
+   Append(~values, K ! (res/den));
+  end for;
+
+  res12 := Qz ! Interpolation(samples, values);
+
+  E3 := Evaluate(e1,x1)*Evaluate(e2,x2) - Evaluate(e1,x2)*Evaluate(e2,x1);
+  E3 div:= x1-x2;
+  res13 := Qz ! UnivariatePolynomial(Resultant(E1,E3,x2));
+
+  g := GCD(res12, res13);
+
+  if g eq 1 then
+    pols := [E3];	// In case gcd-trick fails.
+  else
+    pols := [Evaluate(g, x1), Evaluate(g, x2)];
+  end if;
+
+  if prod then
+    pols cat:= [E1, E2, x0 - (x1*x2)];
+  else
+    pols cat:= [E1, E2, x0 - (x1+x2)];
+  end if;
+
+  EI := EliminationIdeal(Ideal(pols),2);
+  pol := Basis(EI)[1];
+  return pol;
+end function;
+
+divpol := get_divpol(f, ell, false);
+Factorisation(divpol);
